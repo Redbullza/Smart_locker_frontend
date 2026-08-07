@@ -5,7 +5,6 @@ const ACTION_LABEL = { book: 'จองตู้', open: 'ปลดล็อก�
 const LOCKER_STATUS_LABEL = { available: 'ว่าง', unavailable: 'ไม่ว่าง', maintenance: 'ซ่อมบำรุง' };
 const USER_STATUS_LABEL = { active: 'ปกติ', suspended: 'ถูกระงับ' };
 const ROLE_LABEL = { admin: 'Admin', user: 'User' };
-const SIZE_LABEL = { small: 'เล็ก', medium: 'กลาง', large: 'ใหญ่' };
 const BOOKING_STATUS_LABEL = { active: 'กำลังใช้งาน', completed: 'คืนแล้ว', cancelled: 'ถูกปล่อย/ยกเลิก' };
 
 const TABS = [
@@ -22,6 +21,26 @@ function loadStoredUser() {
   } catch {
     return null;
   }
+}
+
+// ---------------- icons (inline, no external deps) ----------------
+function IconHome(props) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <path d="M3 11.5 12 4l9 7.5" />
+      <path d="M5 10v9a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1v-9" />
+    </svg>
+  );
+}
+function IconRefresh(props) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <path d="M3 12a9 9 0 0 1 15.4-6.4L21 8" />
+      <path d="M21 3v5h-5" />
+      <path d="M21 12a9 9 0 0 1-15.4 6.4L3 16" />
+      <path d="M3 21v-5h5" />
+    </svg>
+  );
 }
 
 export default function AdminPage() {
@@ -241,10 +260,10 @@ export default function AdminPage() {
               ) : (
                 filteredLogs.map((r, i) => (
                   <tr key={i}>
-                    <td>{new Date(r.timestamp).toLocaleString('th-TH')}</td>
-                    <td>{r.locker_number}</td>
-                    <td>{r.firstname} {r.lastname}</td>
-                    <td><span className={`badge ${r.action}`}>{ACTION_LABEL[r.action] || r.action}</span></td>
+                    <td data-label="เวลา">{new Date(r.timestamp).toLocaleString('th-TH')}</td>
+                    <td data-label="ตู้">{r.locker_number}</td>
+                    <td data-label="ผู้ใช้งาน">{r.firstname} {r.lastname}</td>
+                    <td data-label="เหตุการณ์"><span className={`badge ${r.action}`}>{ACTION_LABEL[r.action] || r.action}</span></td>
                   </tr>
                 ))
               )}
@@ -267,11 +286,11 @@ export default function AdminPage() {
               ) : (
                 bookings.map((b) => (
                   <tr key={b.booking_id}>
-                    <td>{b.locker_number}</td>
-                    <td>{b.firstname} {b.lastname}</td>
-                    <td>{b.planned_hours ?? '–'}</td>
-                    <td><span className={`badge ${b.status}`}>{BOOKING_STATUS_LABEL[b.status] || b.status}</span></td>
-                    <td>
+                    <td data-label="ตู้">{b.locker_number}</td>
+                    <td data-label="ผู้จอง">{b.firstname} {b.lastname}</td>
+                    <td data-label="ตั้งใจฝาก (ชม.)">{b.planned_hours ?? '–'}</td>
+                    <td data-label="สถานะการจอง"><span className={`badge ${b.status}`}>{BOOKING_STATUS_LABEL[b.status] || b.status}</span></td>
+                    <td data-label="จัดการ">
                       {b.status === 'active' ? (
                         <button className="btn warn small" onClick={() => releaseBooking(b.booking_id)}>ปล่อยตู้ (ไม่มาใช้)</button>
                       ) : '–'}
@@ -298,11 +317,11 @@ export default function AdminPage() {
               ) : (
                 users.map((u) => (
                   <tr key={u.user_id}>
-                    <td>{u.firstname} {u.lastname}</td>
-                    <td>{u.username}</td>
-                    <td><span className={`badge ${u.role}`}>{ROLE_LABEL[u.role] || u.role}</span></td>
-                    <td><span className={`badge ${u.status}`}>{USER_STATUS_LABEL[u.status] || u.status}</span></td>
-                    <td>
+                    <td data-label="ชื่อ-นามสกุล">{u.firstname} {u.lastname}</td>
+                    <td data-label="Username">{u.username}</td>
+                    <td data-label="บทบาท"><span className={`badge ${u.role}`}>{ROLE_LABEL[u.role] || u.role}</span></td>
+                    <td data-label="สถานะ"><span className={`badge ${u.status}`}>{USER_STATUS_LABEL[u.status] || u.status}</span></td>
+                    <td data-label="จัดการ">
                       {u.status === 'active' ? (
                         <button className="btn danger small" onClick={() => toggleUserStatus(u.user_id, 'suspended')}>ระงับสิทธิ์</button>
                       ) : (
@@ -331,17 +350,17 @@ export default function AdminPage() {
               ) : (
                 lockers.map((l) => (
                   <tr key={l.locker_id}>
-                    <td>{l.locker_number}</td>
-                    <td>{l.location}</td>
-                    <td>
+                    <td data-label="หมายเลขตู้">{l.locker_number}</td>
+                    <td data-label="ตำแหน่ง">{l.location}</td>
+                    <td data-label="ขนาด">
                       <select value={l.size} onChange={(e) => changeLocker(l.locker_id, 'size', e.target.value)}>
                         <option value="small">เล็ก</option>
                         <option value="medium">กลาง</option>
                         <option value="large">ใหญ่</option>
                       </select>
                     </td>
-                    <td><span className={`badge ${l.status}`}>{LOCKER_STATUS_LABEL[l.status] || l.status}</span></td>
-                    <td>
+                    <td data-label="สถานะ"><span className={`badge ${l.status}`}>{LOCKER_STATUS_LABEL[l.status] || l.status}</span></td>
+                    <td data-label="เปลี่ยนสถานะ">
                       <select value={l.status} onChange={(e) => changeLocker(l.locker_id, 'status', e.target.value)}>
                         <option value="available">ว่าง</option>
                         <option value="unavailable">ไม่ว่าง</option>
@@ -383,13 +402,13 @@ export default function AdminPage() {
               ) : (
                 reports.map((r, i) => (
                   <tr key={i}>
-                    <td>{r.period_label}</td>
-                    <td>{r.bookings}</td>
-                    <td>{r.opens}</td>
-                    <td>{r.closes}</td>
-                    <td>{r.wrong_pins}</td>
-                    <td><b>{r.total_events}</b></td>
-                    <td>{r.utilization_rate}%</td>
+                    <td data-label={reportPeriod === 'yearly' ? 'ปี' : reportPeriod === 'monthly' ? 'เดือน' : 'วันที่'}>{r.period_label}</td>
+                    <td data-label="จองตู้">{r.bookings}</td>
+                    <td data-label="เปิดตู้">{r.opens}</td>
+                    <td data-label="คืนตู้">{r.closes}</td>
+                    <td data-label="PIN ผิด">{r.wrong_pins}</td>
+                    <td data-label="รวมเหตุการณ์"><b>{r.total_events}</b></td>
+                    <td data-label="อัตราการใช้ตู้">{r.utilization_rate}%</td>
                   </tr>
                 ))
               )}
@@ -402,6 +421,12 @@ export default function AdminPage() {
         <button className="btn" onClick={loadAll}>รีเฟรชตอนนี้</button>
         <span className="updated">{updatedAt}</span>
       </footer>
+
+      {/* Bottom app nav — mobile only */}
+      <nav className="bottom-nav">
+        <a href="/"><IconHome /> หน้าหลัก</a>
+        <button className="active" onClick={loadAll}><IconRefresh /> รีเฟรช</button>
+      </nav>
     </div>
   );
 }

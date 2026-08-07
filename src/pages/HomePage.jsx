@@ -23,6 +23,33 @@ function loadStoredUser() {
   }
 }
 
+// ---------------- icons (inline, no external deps) ----------------
+function IconLockers(props) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <rect x="3" y="3" width="8" height="8" rx="1.5" />
+      <rect x="13" y="3" width="8" height="8" rx="1.5" />
+      <rect x="3" y="13" width="8" height="8" rx="1.5" />
+      <rect x="13" y="13" width="8" height="8" rx="1.5" />
+    </svg>
+  );
+}
+function IconTicket(props) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <path d="M3 9a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v1a2 2 0 0 0 0 4v1a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-1a2 2 0 0 0 0-4Z" />
+      <path d="M13 5v2M13 17v2M13 10.5v3" />
+    </svg>
+  );
+}
+function IconShield(props) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <path d="M12 3 4 6v6c0 4.5 3.2 7.6 8 9 4.8-1.4 8-4.5 8-9V6l-8-3Z" />
+    </svg>
+  );
+}
+
 export default function HomePage() {
   // ---------------- auth ----------------
   const [currentUser, setCurrentUser] = useState(loadStoredUser);
@@ -256,7 +283,7 @@ export default function HomePage() {
   const statUnavailable = lockers.filter((l) => l.status === 'unavailable').length;
 
   return (
-    <div className="wrap">
+    <div className="wrap" id="top">
       <header>
         <div>
           <p className="eyebrow">Prince of Songkla University · Faculty of Liberal Arts</p>
@@ -302,8 +329,8 @@ export default function HomePage() {
                 />
               </div>
             )}
-            <div className="form-row" style={{ marginTop: 14 }}>
-              <button className="btn primary" onClick={handleSubmit}>
+            <div className="form-row" style={{ marginTop: 14, display: 'block' }}>
+              <button className="btn primary" style={{ width: '100%' }} onClick={handleSubmit}>
                 {isRegisterMode ? 'สมัครสมาชิก' : 'เข้าสู่ระบบ'}
               </button>
             </div>
@@ -329,7 +356,7 @@ export default function HomePage() {
         <div className="stat danger"><div className="num">{statUnavailable || '–'}</div><div className="label">ไม่ว่าง</div></div>
       </div>
 
-      <div className="section-label"><span>ผังตู้ล็อกเกอร์ — เลือกขนาดที่ต้องการ</span><div className="rule" /></div>
+      <div id="lockers" className="section-label"><span>ผังตู้ล็อกเกอร์ — เลือกขนาดที่ต้องการ</span><div className="rule" /></div>
       <div className="grid">
         {lockersError ? (
           <div className="empty">เชื่อมต่อ API ไม่ได้ ตรวจสอบว่า server กำลังรันอยู่หรือไม่</div>
@@ -379,7 +406,7 @@ export default function HomePage() {
         )}
       </div>
 
-      <div className="section-label"><span>รายการจองของฉัน</span><div className="rule" /></div>
+      <div id="my-bookings" className="section-label"><span>รายการจองของฉัน</span><div className="rule" /></div>
       <div>
         {!currentUser ? (
           <div className="empty">เข้าสู่ระบบก่อนเพื่อดูรายการจองของคุณ</div>
@@ -411,6 +438,13 @@ export default function HomePage() {
         <button className="btn ghost" onClick={() => { loadLockers(); loadMyBookings(); }}>รีเฟรชตอนนี้</button>
         <span className="updated">{updatedAt}</span>
       </footer>
+
+      {/* Bottom app nav — mobile only */}
+      <nav className="bottom-nav">
+        <a href="#lockers" className="active"><IconLockers /> ตู้ล็อกเกอร์</a>
+        <a href="#my-bookings"><IconTicket /> รายการจองของฉัน</a>
+        <a href="/admin"><IconShield /> Admin</a>
+      </nav>
 
       {/* Modal: แสดงรหัส PIN หลังจองสำเร็จ */}
       <div className={`overlay ${pinResultOverlay ? 'show' : ''}`}>
