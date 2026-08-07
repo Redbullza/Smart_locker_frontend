@@ -1,13 +1,12 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { getJSON, putJSON } from '../api';
 
-const ACTION_LABEL = { book: 'จองตู้', payment: 'ชำระเงิน', open: 'ปลดล็อกตู้', close: 'คืนตู้', wrong_pin: 'กรอก PIN ผิด', admin_release: 'Admin ปล่อยตู้' };
+const ACTION_LABEL = { book: 'จองตู้', open: 'ปลดล็อกตู้', close: 'คืนตู้', wrong_pin: 'กรอก PIN ผิด', admin_release: 'Admin ปล่อยตู้' };
 const LOCKER_STATUS_LABEL = { available: 'ว่าง', unavailable: 'ไม่ว่าง', maintenance: 'ซ่อมบำรุง' };
 const USER_STATUS_LABEL = { active: 'ปกติ', suspended: 'ถูกระงับ' };
 const ROLE_LABEL = { admin: 'Admin', user: 'User' };
 const SIZE_LABEL = { small: 'เล็ก', medium: 'กลาง', large: 'ใหญ่' };
 const BOOKING_STATUS_LABEL = { active: 'กำลังใช้งาน', completed: 'คืนแล้ว', cancelled: 'ถูกปล่อย/ยกเลิก' };
-const PAYMENT_LABEL = { paid: 'จ่ายแล้ว', unpaid: 'ยังไม่จ่าย' };
 
 const TABS = [
   { key: 'logs', label: 'ประวัติการใช้งาน' },
@@ -219,7 +218,6 @@ export default function AdminPage() {
           <select value={filterAction} onChange={(e) => setFilterAction(e.target.value)}>
             <option value="">ทุกประเภทเหตุการณ์</option>
             <option value="book">จองตู้</option>
-            <option value="payment">ชำระเงิน</option>
             <option value="open">เปิดตู้</option>
             <option value="close">คืนตู้</option>
             <option value="wrong_pin">กรอก PIN ผิด</option>
@@ -260,19 +258,18 @@ export default function AdminPage() {
         <div className="section-label"><span>การจองทั้งหมด — ปล่อยตู้ที่ไม่มีคนมาใช้งานได้ที่นี่</span><div className="rule" /></div>
         <div className="table-wrap">
           <table>
-            <thead><tr><th>ตู้</th><th>ผู้จอง</th><th>ราคา</th><th>ชำระเงิน</th><th>สถานะการจอง</th><th>จัดการ</th></tr></thead>
+            <thead><tr><th>ตู้</th><th>ผู้จอง</th><th>ตั้งใจฝาก (ชม.)</th><th>สถานะการจอง</th><th>จัดการ</th></tr></thead>
             <tbody>
               {bookingsError ? (
-                <tr><td colSpan={6} className="empty">เชื่อมต่อ API ไม่ได้</td></tr>
+                <tr><td colSpan={5} className="empty">เชื่อมต่อ API ไม่ได้</td></tr>
               ) : bookings.length === 0 ? (
-                <tr><td colSpan={6} className="empty">ยังไม่มีรายการจอง</td></tr>
+                <tr><td colSpan={5} className="empty">ยังไม่มีรายการจอง</td></tr>
               ) : (
                 bookings.map((b) => (
                   <tr key={b.booking_id}>
                     <td>{b.locker_number}</td>
                     <td>{b.firstname} {b.lastname}</td>
-                    <td>{b.price} บาท</td>
-                    <td><span className={`badge ${b.payment_status}`}>{PAYMENT_LABEL[b.payment_status] || b.payment_status}</span></td>
+                    <td>{b.planned_hours ?? '–'}</td>
                     <td><span className={`badge ${b.status}`}>{BOOKING_STATUS_LABEL[b.status] || b.status}</span></td>
                     <td>
                       {b.status === 'active' ? (
@@ -361,7 +358,7 @@ export default function AdminPage() {
 
       {/* ===== แท็บ: รายงานสรุป ===== */}
       <div className={`tab-panel ${activeTab === 'reports' ? 'active' : ''}`}>
-        <div className="section-label"><span>รายงานการใช้งานและรายได้</span><div className="rule" /></div>
+        <div className="section-label"><span>รายงานการใช้งาน</span><div className="rule" /></div>
         <div className="filter-row">
           <select value={reportPeriod} onChange={(e) => setReportPeriod(e.target.value)}>
             <option value="daily">รายวัน</option>
@@ -375,14 +372,14 @@ export default function AdminPage() {
               <tr>
                 <th>{reportPeriod === 'yearly' ? 'ปี' : reportPeriod === 'monthly' ? 'เดือน' : 'วันที่'}</th>
                 <th>จองตู้</th><th>เปิดตู้</th><th>คืนตู้</th><th>PIN ผิด</th>
-                <th>รวมเหตุการณ์</th><th>รายได้รวม (บาท)</th><th>อัตราการใช้ตู้</th>
+                <th>รวมเหตุการณ์</th><th>อัตราการใช้ตู้</th>
               </tr>
             </thead>
             <tbody>
               {reportsError ? (
-                <tr><td colSpan={8} className="empty">เชื่อมต่อ API ไม่ได้</td></tr>
+                <tr><td colSpan={7} className="empty">เชื่อมต่อ API ไม่ได้</td></tr>
               ) : reports.length === 0 ? (
-                <tr><td colSpan={8} className="empty">ยังไม่มีข้อมูล</td></tr>
+                <tr><td colSpan={7} className="empty">ยังไม่มีข้อมูล</td></tr>
               ) : (
                 reports.map((r, i) => (
                   <tr key={i}>
@@ -392,7 +389,6 @@ export default function AdminPage() {
                     <td>{r.closes}</td>
                     <td>{r.wrong_pins}</td>
                     <td><b>{r.total_events}</b></td>
-                    <td className="revenue-amount">{r.total_revenue}</td>
                     <td>{r.utilization_rate}%</td>
                   </tr>
                 ))

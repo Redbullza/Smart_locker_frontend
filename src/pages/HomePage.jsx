@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { QRCodeSVG } from 'qrcode.react';
 import { getJSON, postJSON, request } from '../api';
 
 const SIZE_LABEL = { small: 'เล็ก', medium: 'กลาง', large: 'ใหญ่' };
 const STATUS_LABEL = { available: 'ว่าง', unavailable: 'ไม่ว่าง', maintenance: 'ซ่อมบำรุง' };
+const HOURS_OPTIONS = [1, 2, 3, 4, 6, 8, 12, 24];
 
 function formatDuration(startStr) {
   const start = new Date(startStr.replace(' ', 'T'));
@@ -40,17 +40,14 @@ export default function HomePage() {
   const [myBookings, setMyBookings] = useState([]);
   const [updatedAt, setUpdatedAt] = useState('–');
 
-  // ---------------- booking / QR payment flow ----------------
-  const [pendingBooking, setPendingBooking] = useState(null);
-  const [pendingSessionId, setPendingSessionId] = useState(null);
-  const [qrOverlay, setQrOverlay] = useState(false);
-  const [qrInfo, setQrInfo] = useState(null); // { locker_number, locker_size, amount, ref_code, qr_payload }
-  const [qrMsg, setQrMsg] = useState(null);
-  const [qrConfirming, setQrConfirming] = useState(false);
+  // ---------------- booking (จองตรง ไม่มีขั้นตอนชำระเงิน) ----------------
+  const [selectedHours, setSelectedHours] = useState({}); // { [locker_id]: hours }
+  const [bookingBusyId, setBookingBusyId] = useState(null);
 
-  // ---------------- pin result (after payment) ----------------
+  // ---------------- pin result (หลังจองสำเร็จ) ----------------
   const [pinResultOverlay, setPinResultOverlay] = useState(false);
   const [pinResultCode, setPinResultCode] = useState('------');
+  const [pinResultHours, setPinResultHours] = useState(null);
 
   // ---------------- pin input (open/close locker) ----------------
   const [pendingAction, setPendingAction] = useState(null); // { booking_id, action }
@@ -151,15 +148,25 @@ export default function HomePage() {
     localStorage.removeItem('locker_user');
   }
 
-  // ---------------- booking / QR payment ----------------
-  async function openBookingConfirm(locker) {
+  // ---------------- booking (ฟรี ไม่มีขั้นตอนชำระเงิน) ----------------
+  function getHoursFor(lockerId) {
+    return selectedHours[lockerId] ?? 2;
+  }
+
+  function handleHoursChange(lockerId, hours) {
+    setSelectedHours((prev) => ({ ...prev, [lockerId]: Number(hours) }));
+  }
+
+  async function handleBook(locker) {
     if (!currentUser) return;
-    setPendingBooking(locker);
+    const hours = getHoursFor(locker.locker_id);
+    setBookingBusyId(locker.locker_id);
 
     try {
-      const res = await postJSON('/payment-sessions', {
+      const res = await postJSON('/booking', {
         user_id: currentUser.user_id,
         locker_id: locker.locker_id,
+        hours,
       });
       if (!res.ok) {
         const text = await res.text();
@@ -171,64 +178,16 @@ export default function HomePage() {
         return;
       }
 
-      setPendingSessionId(json.session_id);
-      setQrInfo({
-        locker_number: json.locker_number,
-        locker_size: json.locker_size,
-        amount: json.amount,
-        ref_code: json.ref_code,
-        qr_payload: json.qr_payload,
-      });
-      setQrMsg(null);
-      setQrOverlay(true);
-    } catch (err) {
-      alert('เกิดข้อผิดพลาด: ' + err.message + '\nตรวจสอบว่ารัน migration-qr-payment.sql แล้วหรือยัง');
-      console.error('Create payment session error:', err);
-    }
-  }
-
-  async function handleQrCancel() {
-    if (pendingSessionId) {
-      request(`/payment-sessions/${pendingSessionId}/cancel`, { method: 'PUT' }).catch(() => {});
-    }
-    setQrOverlay(false);
-    setPendingSessionId(null);
-    setPendingBooking(null);
-  }
-
-  async function handleQrConfirm() {
-    if (!pendingSessionId) return;
-    setQrConfirming(true);
-    setQrMsg(null);
-
-    try {
-      const res = await request(`/payment-sessions/${pendingSessionId}/confirm`, { method: 'POST' });
-
-      if (!res.ok) {
-        const text = await res.text();
-        throw new Error(`เซิร์ฟเวอร์ตอบกลับผิดพลาด (HTTP ${res.status}): ${text.slice(0, 200)}`);
-      }
-
-      const json = await res.json();
-      if (!json.success) {
-        setQrMsg({ type: 'error', text: json.message });
-        return;
-      }
-
-      setQrOverlay(false);
-      setPendingSessionId(null);
       setPinResultCode(json.pin_code);
+      setPinResultHours(json.planned_hours ?? hours);
       setPinResultOverlay(true);
       loadLockers();
       loadMyBookings();
     } catch (err) {
-      setQrMsg({
-        type: 'error',
-        text: `เกิดข้อผิดพลาด: ${err.message} — ตรวจสอบว่ารัน migration-qr-payment.sql ครบแล้วหรือยัง`,
-      });
-      console.error('Confirm payment error:', err);
+      alert('เกิดข้อผิดพลาด: ' + err.message);
+      console.error('Booking error:', err);
     } finally {
-      setQrConfirming(false);
+      setBookingBusyId(null);
     }
   }
 
@@ -385,23 +344,33 @@ export default function HomePage() {
               <div className="number">{l.locker_number}</div>
               <div className="size-tag">ขนาด{SIZE_LABEL[l.size] || l.size}</div>
               <div className="location">{l.location}</div>
-              <div className="price">{l.price} บาท / 2 ชม.</div>
               <span className="pill">{STATUS_LABEL[l.status] || l.status}</span>
               {l.status === 'available' ? (
-                <button
-                  className="btn primary"
-                  disabled={!currentUser}
-                  onClick={() =>
-                    openBookingConfirm({
-                      locker_id: l.locker_id,
-                      locker_number: l.locker_number,
-                      size: l.size,
-                      price: l.price,
-                    })
-                  }
-                >
-                  {currentUser ? 'จองตู้นี้' : 'เข้าสู่ระบบก่อน'}
-                </button>
+                <>
+                  <label className="hours-label" htmlFor={`hours-${l.locker_id}`}>ระยะเวลาที่ตั้งใจฝาก</label>
+                  <select
+                    id={`hours-${l.locker_id}`}
+                    className="hours-select"
+                    disabled={!currentUser}
+                    value={getHoursFor(l.locker_id)}
+                    onChange={(e) => handleHoursChange(l.locker_id, e.target.value)}
+                  >
+                    {HOURS_OPTIONS.map((h) => (
+                      <option key={h} value={h}>{h} ชม.</option>
+                    ))}
+                  </select>
+                  <button
+                    className="btn primary"
+                    disabled={!currentUser || bookingBusyId === l.locker_id}
+                    onClick={() => handleBook(l)}
+                  >
+                    {!currentUser
+                      ? 'เข้าสู่ระบบก่อน'
+                      : bookingBusyId === l.locker_id
+                      ? 'กำลังจอง...'
+                      : 'จองตู้นี้'}
+                  </button>
+                </>
               ) : l.status === 'maintenance' ? (
                 <button className="btn" disabled>ปิดปรับปรุง</button>
               ) : null}
@@ -423,9 +392,10 @@ export default function HomePage() {
                 ตู้ <b>{b.locker_number}</b>
                 <span className="pin-tag">PIN: {b.pin_code}</span>
                 <br />
-                <span style={{ color: 'var(--muted)' }}>{b.location} · จ่ายแล้ว {b.price} บาท</span><br />
+                <span style={{ color: 'var(--muted)' }}>{b.location}</span><br />
                 <span style={{ color: 'var(--muted)', fontSize: 12 }}>
-                  ฝากมาแล้ว {formatDuration(b.created_at)} · ไม่จำกัดเวลา ไม่มีค่าปรับ
+                  ฝากมาแล้ว {formatDuration(b.created_at)}
+                  {b.planned_hours ? ` · ตั้งใจฝาก ${b.planned_hours} ชม.` : ''} · ไม่จำกัดเวลา ไม่มีค่าปรับ
                 </span>
               </div>
               <div className="actions">
@@ -442,42 +412,18 @@ export default function HomePage() {
         <span className="updated">{updatedAt}</span>
       </footer>
 
-      {/* Modal: สแกน QR เพื่อชำระเงิน (จำลอง) */}
-      <div className={`overlay ${qrOverlay ? 'show' : ''}`}>
-        <div className="modal">
-          <h3>สแกนเพื่อชำระเงิน</h3>
-          <p>
-            ตู้หมายเลข <b>{qrInfo?.locker_number ?? '–'}</b> · ขนาด{SIZE_LABEL[qrInfo?.locker_size] || qrInfo?.locker_size || '–'} — QR นี้จะไม่ซ้ำกับครั้งก่อนแม้ราคาจะเท่ากัน
-          </p>
-          <div style={{ display: 'flex', justifyContent: 'center', margin: '14px 0' }}>
-            <div style={{ background: '#fff', padding: 10, borderRadius: 10, border: '1px solid var(--line)' }}>
-              {qrInfo?.qr_payload && <QRCodeSVG value={qrInfo.qr_payload} size={180} />}
-            </div>
-          </div>
-          <div className="info-row"><span>จำนวนเงิน</span><b style={{ color: 'var(--gold)', fontSize: 16 }}>{qrInfo?.amount ?? '–'} บาท</b></div>
-          <div className="info-row"><span>รหัสอ้างอิง</span><b style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11.5 }}>{qrInfo?.ref_code ?? '–'}</b></div>
-          <p style={{ textAlign: 'center', fontSize: 11.5, color: 'var(--muted)', marginTop: 10 }}>
-            * QR จำลองสำหรับสาธิตระบบเท่านั้น ไม่ใช่ QR ชำระเงินจริง
-          </p>
-          {qrMsg && <div className={`msg ${qrMsg.type}`}>{qrMsg.text}</div>}
-          <div className="modal-actions">
-            <button className="btn ghost" onClick={handleQrCancel}>ยกเลิก</button>
-            <button className="btn primary" disabled={qrConfirming} onClick={handleQrConfirm}>
-              {qrConfirming ? 'กำลังตรวจสอบ...' : 'ฉันชำระเงินแล้ว'}
-            </button>
-          </div>
-        </div>
-      </div>
-
       {/* Modal: แสดงรหัส PIN หลังจองสำเร็จ */}
       <div className={`overlay ${pinResultOverlay ? 'show' : ''}`}>
         <div className="modal">
-          <h3>ชำระเงินสำเร็จ</h3>
+          <h3>จองตู้สำเร็จ</h3>
           <p>จำรหัสนี้ไว้ให้ดี ใช้สำหรับเปิด-ปิดตู้ของคุณ</p>
           <div style={{ textAlign: 'center', marginBottom: 14 }}>
             <span className="pin-tag" style={{ fontSize: 20, padding: '10px 20px' }}>{pinResultCode}</span>
           </div>
-          <div className="info-row"><span>สถานะ</span><b>ฝากได้ไม่จำกัดเวลา</b></div>
+          {pinResultHours && (
+            <div className="info-row"><span>ตั้งใจฝาก</span><b>{pinResultHours} ชม.</b></div>
+          )}
+          <div className="info-row"><span>สถานะ</span><b>ฝากได้ไม่จำกัดเวลา ไม่มีค่าใช้จ่าย</b></div>
           <div className="modal-actions">
             <button className="btn primary" onClick={() => setPinResultOverlay(false)}>รับทราบ</button>
           </div>
@@ -491,7 +437,7 @@ export default function HomePage() {
           <p>
             {pendingAction?.action === 'open'
               ? 'ยืนยันรหัสเพื่อเปิดตู้ฝากของ (ระบบจะบันทึก log ว่ามีการเปิดตู้)'
-              : 'ยืนยันรหัสเพื่อคืนตู้ — ถ้าคืนช้ากว่ากำหนด ระบบจะคิดค่าปรับให้อัตโนมัติ'}
+              : 'ยืนยันรหัสเพื่อคืนตู้ — ตู้จะกลับมาว่างให้คนอื่นจองต่อได้ทันที'}
           </p>
           <input
             type="text"
@@ -510,7 +456,7 @@ export default function HomePage() {
         </div>
       </div>
 
-      {/* Modal: แสดงผลหลังคืนตู้ (ค่าปรับถ้ามี) */}
+      {/* Modal: แสดงผลหลังคืนตู้ */}
       <div className={`overlay ${returnResultOverlay ? 'show' : ''}`}>
         <div className="modal">
           <h3>{returnResult.title}</h3>
