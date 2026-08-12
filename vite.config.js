@@ -10,6 +10,7 @@ export default defineConfig({
       '/register': 'http://localhost:5000',
       '/lockers': 'http://localhost:5000',
       '/booking': 'http://localhost:5000',
+      '/payment-sessions': 'http://localhost:5000',
       '/my-bookings': 'http://localhost:5000',
       '/bookings': 'http://localhost:5000',
       '/users': 'http://localhost:5000',
