@@ -1,9 +1,33 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
+import { QRCodeSVG } from 'qrcode.react';
 import { getJSON, postJSON, request } from '../api';
+import { formatMinutes, formatClock, formatDateTime } from '../utils/format';
 
 const SIZE_LABEL = { small: 'เล็ก', medium: 'กลาง', large: 'ใหญ่' };
-const STATUS_LABEL = { available: 'ว่าง', unavailable: 'ไม่ว่าง', maintenance: 'ซ่อมบำรุง' };
-const HOURS_OPTIONS = [1, 2, 3, 4, 6, 8, 12, 24];
+const STATUS_LABEL = {
+  available: 'ว่าง',
+  occupied: 'กำลังถูกใช้งาน',
+  overdue: 'เกินเวลาที่จอง',
+  unavailable: 'ปิดใช้งาน',
+  maintenance: 'ซ่อมบำรุง',
+};
+const MIN_MINUTES = 15;
+const MAX_MINUTES = 24 * 60;
+const MINUTES_STEP = 15;
+const DEFAULT_MINUTES = 120; // 2 ชม.
+const MAX_ADVANCE_DAYS = 7;
+
+function todayDateStr() {
+  return new Date().toISOString().slice(0, 10);
+}
+function maxDateStr() {
+  return new Date(Date.now() + MAX_ADVANCE_DAYS * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+
+// ตัวเลือกเวลาแบบ 24 ชม. เสมอ (ไม่ใช้ <input type="time"> เพราะ browser จะโชว์เป็น 12 ชม. AM/PM
+// ตาม locale ของเครื่อง/OS ผู้ใช้ ซึ่งบังคับด้วย HTML/CSS ให้เป็น 24 ชม. ไม่ได้เลย)
+const HOUR_OPTIONS = Array.from({ length: 24 }, (_, i) => String(i).padStart(2, '0'));
+const MINUTE_OPTIONS = ['00', '15', '30', '45'];
 
 function formatDuration(startStr) {
   const start = new Date(startStr.replace(' ', 'T'));
@@ -50,6 +74,16 @@ function IconShield(props) {
   );
 }
 
+function bookingPhase(b) {
+  const now = Date.now();
+  const start = new Date(b.start_time).getTime();
+  const end = new Date(b.end_time).getTime();
+  if (Number.isNaN(start) || Number.isNaN(end)) return 'active'; // fallback ข้อมูลเก่าที่ไม่มี start/end
+  if (now < start) return 'upcoming';
+  if (now < end) return 'active';
+  return 'overdue';
+}
+
 export default function HomePage() {
   // ---------------- auth ----------------
   const [currentUser, setCurrentUser] = useState(loadStoredUser);
@@ -67,14 +101,24 @@ export default function HomePage() {
   const [myBookings, setMyBookings] = useState([]);
   const [updatedAt, setUpdatedAt] = useState('–');
 
-  // ---------------- booking (จองตรง ไม่มีขั้นตอนชำระเงิน) ----------------
-  const [selectedHours, setSelectedHours] = useState({}); // { [locker_id]: hours }
+  // ---------------- booking (จองตรง) ----------------
+  const [selectedMinutes, setSelectedMinutes] = useState({}); // { [locker_id]: minutes }
+  const [selectedSchedule, setSelectedSchedule] = useState({}); // { [locker_id]: { mode: 'now'|'later', date, time } }
   const [bookingBusyId, setBookingBusyId] = useState(null);
+
+  // ---------------- payment (คิดเงินตามขนาดตู้ ก่อนยืนยันจอง — QR จำลอง) ----------------
+  const [paymentOverlay, setPaymentOverlay] = useState(false);
+  const [paymentSession, setPaymentSession] = useState(null); // { session_id, locker_number, locker_size, amount, ref_code, qr_payload, planned_minutes }
+  const [paymentBusy, setPaymentBusy] = useState(false);
+  const [paymentMsg, setPaymentMsg] = useState(null);
+  const [paidAmount, setPaidAmount] = useState(null);
 
   // ---------------- pin result (หลังจองสำเร็จ) ----------------
   const [pinResultOverlay, setPinResultOverlay] = useState(false);
   const [pinResultCode, setPinResultCode] = useState('------');
-  const [pinResultHours, setPinResultHours] = useState(null);
+  const [pinResultMinutes, setPinResultMinutes] = useState(null);
+  const [pinResultStart, setPinResultStart] = useState(null);
+  const [pinResultEnd, setPinResultEnd] = useState(null);
 
   // ---------------- pin input (open/close locker) ----------------
   const [pendingAction, setPendingAction] = useState(null); // { booking_id, action }
@@ -175,25 +219,67 @@ export default function HomePage() {
     localStorage.removeItem('locker_user');
   }
 
-  // ---------------- booking (ฟรี ไม่มีขั้นตอนชำระเงิน) ----------------
-  function getHoursFor(lockerId) {
-    return selectedHours[lockerId] ?? 2;
+  // ---------------- booking + คิดเงินตามขนาดตู้ ----------------
+  function getMinutesFor(lockerId) {
+    return selectedMinutes[lockerId] ?? DEFAULT_MINUTES;
   }
 
-  function handleHoursChange(lockerId, hours) {
-    setSelectedHours((prev) => ({ ...prev, [lockerId]: Number(hours) }));
+  function handleMinutesChange(lockerId, minutes) {
+    setSelectedMinutes((prev) => ({ ...prev, [lockerId]: Number(minutes) }));
+  }
+
+  function getScheduleFor(lockerId) {
+    return selectedSchedule[lockerId] ?? { mode: 'now', date: todayDateStr(), time: '09:00' };
+  }
+
+  function handleScheduleModeChange(lockerId, mode) {
+    setSelectedSchedule((prev) => ({ ...prev, [lockerId]: { ...getScheduleFor(lockerId), mode } }));
+  }
+
+  function handleScheduleFieldChange(lockerId, field, value) {
+    setSelectedSchedule((prev) => ({ ...prev, [lockerId]: { ...getScheduleFor(lockerId), [field]: value } }));
+  }
+
+  // อัปเดตแค่ชั่วโมงหรือนาทีของเวลา (เก็บเป็น "HH:MM" แบบ 24 ชม. เหมือนเดิม ไม่กระทบ backend)
+  function handleScheduleTimePartChange(lockerId, part, value) {
+    const current = getScheduleFor(lockerId).time || '09:00';
+    const [h, m] = current.split(':');
+    const nextTime = part === 'hour' ? `${value}:${m ?? '00'}` : `${h ?? '09'}:${value}`;
+    handleScheduleFieldChange(lockerId, 'time', nextTime);
+  }
+
+  // คืนค่า ISO string ของเวลาที่จะเริ่มใช้ตู้ หรือ null ถ้าเลือก "ใช้ตอนนี้" (ให้ backend ใช้เวลาปัจจุบันเอง)
+  // คืนค่า false ถ้าเลือก "จองล่วงหน้า" แต่ยังกรอกวัน/เวลาไม่ครบหรือไม่ถูกต้อง
+  function resolveStartTime(lockerId) {
+    const schedule = getScheduleFor(lockerId);
+    if (schedule.mode === 'now') return null;
+    if (!schedule.date || !schedule.time) {
+      alert('กรุณาเลือกวันและเวลาที่ต้องการจอง');
+      return false;
+    }
+    const combined = new Date(`${schedule.date}T${schedule.time}:00`);
+    if (Number.isNaN(combined.getTime())) {
+      alert('วันเวลาที่เลือกไม่ถูกต้อง');
+      return false;
+    }
+    return combined.toISOString();
   }
 
   async function handleBook(locker) {
     if (!currentUser) return;
-    const hours = getHoursFor(locker.locker_id);
+    const minutes = getMinutesFor(locker.locker_id);
+    const startTime = resolveStartTime(locker.locker_id);
+    if (startTime === false) return; // วัน/เวลาที่เลือกไม่ถูกต้อง — แจ้งเตือนไปแล้ว
+
     setBookingBusyId(locker.locker_id);
+    setPaymentMsg(null);
 
     try {
-      const res = await postJSON('/booking', {
+      const res = await postJSON('/payment-sessions', {
         user_id: currentUser.user_id,
         locker_id: locker.locker_id,
-        hours,
+        minutes,
+        start_time: startTime,
       });
       if (!res.ok) {
         const text = await res.text();
@@ -205,16 +291,58 @@ export default function HomePage() {
         return;
       }
 
+      setPaymentSession(json);
+      setPaymentOverlay(true);
+    } catch (err) {
+      alert('เกิดข้อผิดพลาด: ' + err.message);
+      console.error('Create payment session error:', err);
+    } finally {
+      setBookingBusyId(null);
+    }
+  }
+
+  // ---------------- payment modal (QR จำลอง) ----------------
+  async function handlePaymentCancel() {
+    if (paymentSession?.session_id) {
+      request(`/payment-sessions/${paymentSession.session_id}/cancel`, { method: 'PUT' }).catch(() => {});
+    }
+    setPaymentOverlay(false);
+    setPaymentSession(null);
+    setPaymentMsg(null);
+  }
+
+  async function handlePaymentConfirm() {
+    if (!paymentSession?.session_id) return;
+    setPaymentBusy(true);
+    setPaymentMsg(null);
+
+    try {
+      const res = await request(`/payment-sessions/${paymentSession.session_id}/confirm`, { method: 'POST' });
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`เซิร์ฟเวอร์ตอบกลับผิดพลาด (HTTP ${res.status}): ${text.slice(0, 200)}`);
+      }
+      const json = await res.json();
+      if (!json.success) {
+        setPaymentMsg({ type: 'error', text: json.message });
+        return;
+      }
+
+      setPaymentOverlay(false);
+      setPaidAmount(json.amount ?? paymentSession.amount);
       setPinResultCode(json.pin_code);
-      setPinResultHours(json.planned_hours ?? hours);
+      setPinResultMinutes(json.planned_minutes ?? paymentSession.planned_minutes);
+      setPinResultStart(json.start_time ?? paymentSession.start_time);
+      setPinResultEnd(json.end_time ?? paymentSession.end_time);
       setPinResultOverlay(true);
+      setPaymentSession(null);
       loadLockers();
       loadMyBookings();
     } catch (err) {
-      alert('เกิดข้อผิดพลาด: ' + err.message);
-      console.error('Booking error:', err);
+      setPaymentMsg({ type: 'error', text: `เกิดข้อผิดพลาด: ${err.message}` });
+      console.error('Confirm payment error:', err);
     } finally {
-      setBookingBusyId(null);
+      setPaymentBusy(false);
     }
   }
 
@@ -279,8 +407,8 @@ export default function HomePage() {
 
   // ---------------- derived stats ----------------
   const statTotal = lockers.length;
-  const statAvailable = lockers.filter((l) => l.status === 'available').length;
-  const statUnavailable = lockers.filter((l) => l.status === 'unavailable').length;
+  const statAvailable = lockers.filter((l) => l.display_status === 'available').length;
+  const statInUse = lockers.filter((l) => l.display_status === 'occupied' || l.display_status === 'overdue').length;
 
   return (
     <div className="wrap" id="top">
@@ -353,7 +481,7 @@ export default function HomePage() {
       <div className="stats">
         <div className="stat"><div className="num">{statTotal || '–'}</div><div className="label">ตู้ทั้งหมด</div></div>
         <div className="stat ok"><div className="num">{statAvailable || '–'}</div><div className="label">ว่าง</div></div>
-        <div className="stat danger"><div className="num">{statUnavailable || '–'}</div><div className="label">ไม่ว่าง</div></div>
+        <div className="stat danger"><div className="num">{statInUse || '–'}</div><div className="label">กำลังใช้งาน</div></div>
       </div>
 
       <div id="lockers" className="section-label"><span>ผังตู้ล็อกเกอร์ — เลือกขนาดที่ต้องการ</span><div className="rule" /></div>
@@ -366,26 +494,94 @@ export default function HomePage() {
           <div className="empty">ยังไม่มีตู้ล็อกเกอร์ในระบบ</div>
         ) : (
           lockers.map((l) => (
-            <div className={`locker ${l.status}`} key={l.locker_id}>
+            <div className={`locker ${l.display_status}`} key={l.locker_id}>
               <span className="dot" />
               <div className="number">{l.locker_number}</div>
               <div className="size-tag">ขนาด{SIZE_LABEL[l.size] || l.size}</div>
               <div className="location">{l.location}</div>
-              <span className="pill">{STATUS_LABEL[l.status] || l.status}</span>
-              {l.status === 'available' ? (
+              <span className="pill">{STATUS_LABEL[l.display_status] || l.display_status}</span>
+
+              {l.display_status === 'occupied' && (
+                <div className="status-note">ว่างอีกครั้ง {formatClock(l.available_at)}</div>
+              )}
+              {l.display_status === 'overdue' && (
+                <div className="status-note danger">เกินเวลามาแล้ว {formatDuration(l.overdue_since)}</div>
+              )}
+
+              {l.display_status === 'maintenance' ? (
+                <button className="btn" disabled>ปิดปรับปรุง</button>
+              ) : l.display_status === 'unavailable' ? (
+                <button className="btn" disabled>ปิดใช้งาน</button>
+              ) : (
                 <>
-                  <label className="hours-label" htmlFor={`hours-${l.locker_id}`}>ระยะเวลาที่ตั้งใจฝาก</label>
-                  <select
-                    id={`hours-${l.locker_id}`}
-                    className="hours-select"
+                  <div className="schedule-row">
+                    <button
+                      type="button"
+                      className={`chip ${getScheduleFor(l.locker_id).mode === 'now' ? 'active' : ''}`}
+                      disabled={!currentUser}
+                      onClick={() => handleScheduleModeChange(l.locker_id, 'now')}
+                    >
+                      ใช้ตอนนี้
+                    </button>
+                    <button
+                      type="button"
+                      className={`chip ${getScheduleFor(l.locker_id).mode === 'later' ? 'active' : ''}`}
+                      disabled={!currentUser}
+                      onClick={() => handleScheduleModeChange(l.locker_id, 'later')}
+                    >
+                      จองล่วงหน้า
+                    </button>
+                  </div>
+                  {getScheduleFor(l.locker_id).mode === 'later' && (
+                    <div className="schedule-datetime">
+                      <input
+                        type="date"
+                        lang="th-TH"
+                        min={todayDateStr()}
+                        max={maxDateStr()}
+                        disabled={!currentUser}
+                        value={getScheduleFor(l.locker_id).date}
+                        onChange={(e) => handleScheduleFieldChange(l.locker_id, 'date', e.target.value)}
+                      />
+                      <div className="schedule-time-row">
+                        <select
+                          aria-label="ชั่วโมง"
+                          disabled={!currentUser}
+                          value={(getScheduleFor(l.locker_id).time || '09:00').split(':')[0]}
+                          onChange={(e) => handleScheduleTimePartChange(l.locker_id, 'hour', e.target.value)}
+                        >
+                          {HOUR_OPTIONS.map((h) => <option key={h} value={h}>{h}</option>)}
+                        </select>
+                        <span className="schedule-time-sep">:</span>
+                        <select
+                          aria-label="นาที"
+                          disabled={!currentUser}
+                          value={(getScheduleFor(l.locker_id).time || '09:00').split(':')[1]}
+                          onChange={(e) => handleScheduleTimePartChange(l.locker_id, 'minute', e.target.value)}
+                        >
+                          {MINUTE_OPTIONS.map((m) => <option key={m} value={m}>{m}</option>)}
+                        </select>
+                        <span className="schedule-time-hint">24 ชม.</span>
+                      </div>
+                    </div>
+                  )}
+
+                  <label className="hours-label" htmlFor={`minutes-${l.locker_id}`}>
+                    ระยะเวลา · <b>{formatMinutes(getMinutesFor(l.locker_id))}</b>
+                  </label>
+                  <input
+                    id={`minutes-${l.locker_id}`}
+                    className="hours-range"
+                    type="range"
+                    min={MIN_MINUTES}
+                    max={MAX_MINUTES}
+                    step={MINUTES_STEP}
                     disabled={!currentUser}
-                    value={getHoursFor(l.locker_id)}
-                    onChange={(e) => handleHoursChange(l.locker_id, e.target.value)}
-                  >
-                    {HOURS_OPTIONS.map((h) => (
-                      <option key={h} value={h}>{h} ชม.</option>
-                    ))}
-                  </select>
+                    value={getMinutesFor(l.locker_id)}
+                    onChange={(e) => handleMinutesChange(l.locker_id, e.target.value)}
+                  />
+                  <div className="hours-range-scale"><span>15 นาที</span><span>24 ชม.</span></div>
+
                   <button
                     className="btn primary"
                     disabled={!currentUser || bookingBusyId === l.locker_id}
@@ -394,13 +590,11 @@ export default function HomePage() {
                     {!currentUser
                       ? 'เข้าสู่ระบบก่อน'
                       : bookingBusyId === l.locker_id
-                      ? 'กำลังจอง...'
-                      : 'จองตู้นี้'}
+                      ? 'กำลังเตรียมชำระเงิน...'
+                      : 'จองตู้'}
                   </button>
                 </>
-              ) : l.status === 'maintenance' ? (
-                <button className="btn" disabled>ปิดปรับปรุง</button>
-              ) : null}
+              )}
             </div>
           ))
         )}
@@ -413,24 +607,38 @@ export default function HomePage() {
         ) : myBookings.length === 0 ? (
           <div className="empty">ยังไม่มีรายการจองที่ใช้งานอยู่</div>
         ) : (
-          myBookings.map((b) => (
-            <div className="booking" key={b.booking_id}>
-              <div className="info">
-                ตู้ <b>{b.locker_number}</b>
-                <span className="pin-tag">PIN: {b.pin_code}</span>
-                <br />
-                <span style={{ color: 'var(--muted)' }}>{b.location}</span><br />
-                <span style={{ color: 'var(--muted)', fontSize: 12 }}>
-                  ฝากมาแล้ว {formatDuration(b.created_at)}
-                  {b.planned_hours ? ` · ตั้งใจฝาก ${b.planned_hours} ชม.` : ''} · ไม่จำกัดเวลา ไม่มีค่าปรับ
-                </span>
+          myBookings.map((b) => {
+            const phase = bookingPhase(b);
+            return (
+              <div className="booking" key={b.booking_id}>
+                <div className="info">
+                  ตู้ <b>{b.locker_number}</b>
+                  <span className="pin-tag">PIN: {b.pin_code}</span>
+                  {phase === 'overdue' && <span className="pin-tag danger">เกินเวลา</span>}
+                  <br />
+                  <span style={{ color: 'var(--muted)' }}>{b.location}</span><br />
+                  {phase === 'upcoming' ? (
+                    <span style={{ color: 'var(--muted)', fontSize: 12 }}>
+                      จองล่วงหน้าไว้ {formatDateTime(b.start_time)} – {formatClock(b.end_time)} · ยังไม่เริ่มใช้งาน
+                    </span>
+                  ) : phase === 'overdue' ? (
+                    <span style={{ color: 'var(--danger)', fontSize: 12 }}>
+                      ควรคืนตู้ตั้งแต่ {formatDateTime(b.end_time)} · เกินเวลามาแล้ว {formatDuration(b.end_time)}
+                    </span>
+                  ) : (
+                    <span style={{ color: 'var(--muted)', fontSize: 12 }}>
+                      กำลังใช้งาน {formatClock(b.start_time)} – {formatClock(b.end_time)}
+                      {b.planned_minutes ? ` · ${formatMinutes(b.planned_minutes)}` : ''}
+                    </span>
+                  )}
+                </div>
+                <div className="actions">
+                  <button className="btn primary" onClick={() => openPinModal(b.booking_id, 'open')}>ปลดล็อกตู้</button>
+                  <button className="btn ghost" onClick={() => openPinModal(b.booking_id, 'close')}>คืนตู้ (ว่าง)</button>
+                </div>
               </div>
-              <div className="actions">
-                <button className="btn primary" onClick={() => openPinModal(b.booking_id, 'open')}>ปลดล็อกตู้</button>
-                <button className="btn ghost" onClick={() => openPinModal(b.booking_id, 'close')}>คืนตู้ (ว่าง)</button>
-              </div>
-            </div>
-          ))
+            );
+          })
         )}
       </div>
 
@@ -446,6 +654,36 @@ export default function HomePage() {
         <a href="/admin"><IconShield /> Admin</a>
       </nav>
 
+      {/* Modal: สแกน QR เพื่อชำระเงิน (จำลอง) */}
+      <div className={`overlay ${paymentOverlay ? 'show' : ''}`}>
+        <div className="modal">
+          <h3>สแกนเพื่อชำระเงิน</h3>
+          <p>
+            ตู้หมายเลข <b>{paymentSession?.locker_number ?? '–'}</b> · ขนาด{SIZE_LABEL[paymentSession?.locker_size] || paymentSession?.locker_size}
+            {' '}— QR นี้จะไม่ซ้ำกับครั้งก่อนแม้ราคาจะเท่ากัน
+          </p>
+          <div style={{ display: 'flex', justifyContent: 'center', margin: '14px 0' }}>
+            <div style={{ background: '#fff', padding: 10, borderRadius: 10, border: '1px solid var(--line)' }}>
+              {paymentSession && <QRCodeSVG value={paymentSession.qr_payload} size={180} />}
+            </div>
+          </div>
+          <div className="info-row"><span>จำนวนเงิน</span><b style={{ color: 'var(--gold)', fontSize: 16 }}>{paymentSession?.amount ?? '–'} บาท</b></div>
+          <div className="info-row"><span>เริ่มใช้งาน</span><b>{paymentSession?.start_time ? formatDateTime(paymentSession.start_time) : 'ตอนนี้'}</b></div>
+          <div className="info-row"><span>ระยะเวลา</span><b>{paymentSession?.planned_minutes ? formatMinutes(paymentSession.planned_minutes) : 'ไม่ระบุ'}</b></div>
+          <div className="info-row"><span>รหัสอ้างอิง</span><b style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11.5 }}>{paymentSession?.ref_code ?? '–'}</b></div>
+          <p style={{ textAlign: 'center', fontSize: 11.5, color: 'var(--muted)', marginTop: 10 }}>
+            * QR จำลองสำหรับสาธิตระบบเท่านั้น ไม่ใช่ QR ชำระเงินจริง
+          </p>
+          {paymentMsg && <div className={`msg ${paymentMsg.type}`}>{paymentMsg.text}</div>}
+          <div className="modal-actions">
+            <button className="btn ghost" onClick={handlePaymentCancel}>ยกเลิก</button>
+            <button className="btn primary" disabled={paymentBusy} onClick={handlePaymentConfirm}>
+              {paymentBusy ? 'กำลังตรวจสอบ...' : 'ฉันชำระเงินแล้ว'}
+            </button>
+          </div>
+        </div>
+      </div>
+
       {/* Modal: แสดงรหัส PIN หลังจองสำเร็จ */}
       <div className={`overlay ${pinResultOverlay ? 'show' : ''}`}>
         <div className="modal">
@@ -454,10 +692,18 @@ export default function HomePage() {
           <div style={{ textAlign: 'center', marginBottom: 14 }}>
             <span className="pin-tag" style={{ fontSize: 20, padding: '10px 20px' }}>{pinResultCode}</span>
           </div>
-          {pinResultHours && (
-            <div className="info-row"><span>ตั้งใจฝาก</span><b>{pinResultHours} ชม.</b></div>
+          {pinResultStart && (
+            <div className="info-row"><span>เริ่มใช้งาน</span><b>{formatDateTime(pinResultStart)}</b></div>
           )}
-          <div className="info-row"><span>สถานะ</span><b>ฝากได้ไม่จำกัดเวลา ไม่มีค่าใช้จ่าย</b></div>
+          {pinResultEnd && (
+            <div className="info-row"><span>ถึง</span><b>{formatDateTime(pinResultEnd)}</b></div>
+          )}
+          {pinResultMinutes && (
+            <div className="info-row"><span>ระยะเวลา</span><b>{formatMinutes(pinResultMinutes)}</b></div>
+          )}
+          {paidAmount != null && (
+            <div className="info-row"><span>ชำระแล้ว</span><b style={{ color: 'var(--gold)' }}>{paidAmount} บาท</b></div>
+          )}
           <div className="modal-actions">
             <button className="btn primary" onClick={() => setPinResultOverlay(false)}>รับทราบ</button>
           </div>

@@ -1,11 +1,37 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { getJSON, putJSON } from '../api';
+import { formatDateTime } from '../utils/format';
 
 const ACTION_LABEL = { book: 'จองตู้', open: 'ปลดล็อกตู้', close: 'คืนตู้', wrong_pin: 'กรอก PIN ผิด', admin_release: 'Admin ปล่อยตู้' };
-const LOCKER_STATUS_LABEL = { available: 'ว่าง', unavailable: 'ไม่ว่าง', maintenance: 'ซ่อมบำรุง' };
+// สถานะที่คำนวณสดจากตารางการจอง (แสดงในคอลัมน์ "สถานะ")
+const DISPLAY_STATUS_LABEL = {
+  available: 'ว่าง',
+  occupied: 'กำลังถูกใช้งาน',
+  overdue: 'เกินเวลาที่จอง',
+  unavailable: 'ปิดใช้งาน',
+  maintenance: 'ซ่อมบำรุง',
+};
 const USER_STATUS_LABEL = { active: 'ปกติ', suspended: 'ถูกระงับ' };
 const ROLE_LABEL = { admin: 'Admin', user: 'User' };
-const BOOKING_STATUS_LABEL = { active: 'กำลังใช้งาน', completed: 'คืนแล้ว', cancelled: 'ถูกปล่อย/ยกเลิก' };
+
+// สถานะของ booking แต่ละแถว เทียบกับเวลาปัจจุบัน (ใช้แค่ตอน status ยัง active อยู่)
+function bookingPhase(b) {
+  if (b.status !== 'active') return b.status; // completed / cancelled แสดงตามเดิม
+  const now = Date.now();
+  const start = new Date(b.start_time).getTime();
+  const end = new Date(b.end_time).getTime();
+  if (Number.isNaN(start) || Number.isNaN(end)) return 'active';
+  if (now < start) return 'upcoming';
+  if (now < end) return 'active';
+  return 'overdue';
+}
+const PHASE_LABEL = {
+  upcoming: 'ยังไม่เริ่ม',
+  active: 'กำลังใช้งาน',
+  overdue: 'เกินเวลา',
+  completed: 'คืนแล้ว',
+  cancelled: 'ถูกปล่อย/ยกเลิก',
+};
 
 const TABS = [
   { key: 'logs', label: 'ประวัติการใช้งาน' },
@@ -207,7 +233,7 @@ export default function AdminPage() {
         <div>
           <p className="eyebrow">Prince of Songkla University · Faculty of Liberal Arts</p>
           <h1>แผงควบคุมผู้ดูแลระบบ</h1>
-          <p className="subtitle">จัดการผู้ใช้งาน / ตู้ล็อกเกอร์ / ประวัติ / รายงาน — ฝากได้ไม่จำกัดเวลา ไม่มีค่าปรับ</p>
+          <p className="subtitle">จัดการผู้ใช้งาน / ตู้ล็อกเกอร์ / ประวัติ / รายงาน — รองรับจองล่วงหน้าได้ไม่เกิน 7 วัน ไม่มีค่าปรับอัตโนมัติ</p>
         </div>
         <div className="top-links"><a href="/">← กลับหน้าหลัก</a></div>
       </header>
@@ -215,8 +241,8 @@ export default function AdminPage() {
       <div className="stats admin">
         <div className="stat"><div className="num">{dashboard.total_lockers ?? '0'}</div><div className="label">ตู้ทั้งหมด</div></div>
         <div className="stat ok"><div className="num">{dashboard.available_lockers ?? '0'}</div><div className="label">ว่าง</div></div>
-        <div className="stat danger"><div className="num">{dashboard.in_use_lockers ?? '0'}</div><div className="label">ไม่ว่าง</div></div>
-        <div className="stat grey"><div className="num">{dashboard.maintenance_lockers ?? '0'}</div><div className="label">ซ่อมบำรุง</div></div>
+        <div className="stat danger"><div className="num">{dashboard.in_use_lockers ?? '0'}</div><div className="label">กำลังใช้งาน</div></div>
+        <div className="stat grey"><div className="num">{dashboard.maintenance_lockers ?? '0'}</div><div className="label">ปิดใช้งาน/ซ่อมบำรุง</div></div>
       </div>
 
       <div className="tabs">
@@ -277,26 +303,30 @@ export default function AdminPage() {
         <div className="section-label"><span>การจองทั้งหมด — ปล่อยตู้ที่ไม่มีคนมาใช้งานได้ที่นี่</span><div className="rule" /></div>
         <div className="table-wrap">
           <table>
-            <thead><tr><th>ตู้</th><th>ผู้จอง</th><th>ตั้งใจฝาก (ชม.)</th><th>สถานะการจอง</th><th>จัดการ</th></tr></thead>
+            <thead><tr><th>ตู้</th><th>ผู้จอง</th><th>เริ่ม</th><th>ถึง</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
             <tbody>
               {bookingsError ? (
-                <tr><td colSpan={5} className="empty">เชื่อมต่อ API ไม่ได้</td></tr>
+                <tr><td colSpan={6} className="empty">เชื่อมต่อ API ไม่ได้</td></tr>
               ) : bookings.length === 0 ? (
-                <tr><td colSpan={5} className="empty">ยังไม่มีรายการจอง</td></tr>
+                <tr><td colSpan={6} className="empty">ยังไม่มีรายการจอง</td></tr>
               ) : (
-                bookings.map((b) => (
-                  <tr key={b.booking_id}>
-                    <td data-label="ตู้">{b.locker_number}</td>
-                    <td data-label="ผู้จอง">{b.firstname} {b.lastname}</td>
-                    <td data-label="ตั้งใจฝาก (ชม.)">{b.planned_hours ?? '–'}</td>
-                    <td data-label="สถานะการจอง"><span className={`badge ${b.status}`}>{BOOKING_STATUS_LABEL[b.status] || b.status}</span></td>
-                    <td data-label="จัดการ">
-                      {b.status === 'active' ? (
-                        <button className="btn warn small" onClick={() => releaseBooking(b.booking_id)}>ปล่อยตู้ (ไม่มาใช้)</button>
-                      ) : '–'}
-                    </td>
-                  </tr>
-                ))
+                bookings.map((b) => {
+                  const phase = bookingPhase(b);
+                  return (
+                    <tr key={b.booking_id}>
+                      <td data-label="ตู้">{b.locker_number}</td>
+                      <td data-label="ผู้จอง">{b.firstname} {b.lastname}</td>
+                      <td data-label="เริ่ม">{formatDateTime(b.start_time)}</td>
+                      <td data-label="ถึง">{formatDateTime(b.end_time)}</td>
+                      <td data-label="สถานะ"><span className={`badge ${phase}`}>{PHASE_LABEL[phase] || phase}</span></td>
+                      <td data-label="จัดการ">
+                        {b.status === 'active' ? (
+                          <button className="btn warn small" onClick={() => releaseBooking(b.booking_id)}>ปล่อยตู้ (ไม่มาใช้)</button>
+                        ) : '–'}
+                      </td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>
@@ -341,7 +371,7 @@ export default function AdminPage() {
         <div className="section-label"><span>ตู้ล็อกเกอร์ทั้งหมด — เปิด/ปิด/ซ่อมบำรุง/ขนาด</span><div className="rule" /></div>
         <div className="table-wrap">
           <table>
-            <thead><tr><th>หมายเลขตู้</th><th>ตำแหน่ง</th><th>ขนาด</th><th>สถานะ</th><th>เปลี่ยนสถานะ</th></tr></thead>
+            <thead><tr><th>หมายเลขตู้</th><th>ตำแหน่ง</th><th>ขนาด</th><th>สถานะ</th><th>เปลี่ยนสถานะ (ปิดใช้งานเอง)</th></tr></thead>
             <tbody>
               {lockersError ? (
                 <tr><td colSpan={5} className="empty">เชื่อมต่อ API ไม่ได้</td></tr>
@@ -359,11 +389,19 @@ export default function AdminPage() {
                         <option value="large">ใหญ่</option>
                       </select>
                     </td>
-                    <td data-label="สถานะ"><span className={`badge ${l.status}`}>{LOCKER_STATUS_LABEL[l.status] || l.status}</span></td>
+                    <td data-label="สถานะ">
+                      <span className={`badge ${l.display_status}`}>{DISPLAY_STATUS_LABEL[l.display_status] || l.display_status}</span>
+                      {l.display_status === 'occupied' && (
+                        <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>ว่างอีกครั้ง {formatDateTime(l.available_at)}</div>
+                      )}
+                      {l.display_status === 'overdue' && (
+                        <div style={{ fontSize: 11, color: 'var(--danger)', marginTop: 4 }}>ควรว่างตั้งแต่ {formatDateTime(l.overdue_since)}</div>
+                      )}
+                    </td>
                     <td data-label="เปลี่ยนสถานะ">
                       <select value={l.status} onChange={(e) => changeLocker(l.locker_id, 'status', e.target.value)}>
-                        <option value="available">ว่าง</option>
-                        <option value="unavailable">ไม่ว่าง</option>
+                        <option value="available">ว่าง (ปกติ)</option>
+                        <option value="unavailable">ปิดใช้งานเอง</option>
                         <option value="maintenance">ซ่อมบำรุง</option>
                       </select>
                     </td>
