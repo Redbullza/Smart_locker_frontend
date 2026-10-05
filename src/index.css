@@ -185,18 +185,34 @@ input:focus-visible { outline: 2px solid var(--gold); outline-offset: 1px; }
 .locker .btn { margin-top: 10px; width: 100%; padding: 8px 10px; font-size: 12px; }
 
 /* ---------------- bookings list ---------------- */
+.batch-toolbar {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+  padding: 10px 14px; margin-bottom: 10px;
+}
+.batch-select-all { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); cursor: pointer; }
+.batch-toolbar .btn { margin-left: auto; }
+.batch-toolbar .btn + .btn { margin-left: 0; }
+
 .booking {
   background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px;
   display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 10px;
 }
-.booking .info { font-size: 13px; }
+.booking-check { display: flex; align-items: center; padding-right: 4px; }
+.booking-check input { width: 18px; height: 18px; cursor: pointer; }
+.booking .info { font-size: 13px; flex: 1; min-width: 200px; }
 .booking .info b { font-family: 'Fraunces', serif; font-size: 16px; font-weight: 600; }
 .booking .pin-tag {
   font-family: 'IBM Plex Mono', monospace; background: var(--gold-soft); color: var(--gold);
   padding: 2px 8px; border-radius: 6px; font-size: 11.5px; margin-left: 6px;
 }
 .booking .pin-tag.danger { background: var(--danger-soft); color: var(--danger); font-family: 'Inter', sans-serif; font-weight: 600; }
-.booking .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.booking .actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.btn-link-small {
+  background: none; border: none; padding: 0; margin-left: 4px; cursor: pointer;
+  font-family: 'Inter', sans-serif; font-size: 11.5px; color: var(--muted); text-decoration: underline;
+}
+.btn-link-small:hover { color: var(--ink); }
 
 .empty {
   text-align: center; padding: 36px 16px; color: var(--muted); font-size: 13.5px;
@@ -322,3 +338,57 @@ footer { display: flex; justify-content: space-between; align-items: center; fle
   }
 }
 @media (prefers-reduced-motion: reduce) { .locker { transition: none; } }
+
+/* ---------------- admin header: ชื่อผู้ใช้ + ปุ่มออกจากระบบ ---------------- */
+.top-links { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.admin-who { font-size: 12.5px; color: var(--muted); }
+
+/* ---------------- สถานะตู้: ไม่ว่าง / กำลังใช้งาน (ของฉัน) ---------------- */
+.locker.busy .dot { background: var(--warn); }
+.locker.in_use .dot { background: var(--danger); }
+.locker.busy .pill { background: var(--warn-soft); color: var(--warn); }
+.locker.in_use .pill { background: var(--danger-soft); color: var(--danger); }
+.locker.in_use { border-color: var(--danger); }
+.locker .status-note.mine { color: var(--danger); font-weight: 600; }
+.badge.busy { background: var(--warn-soft); color: var(--warn); }
+.badge.in_use { background: var(--danger-soft); color: var(--danger); }
+
+/* ---------------- แท็บหน้า: ตู้ทั้งหมด / ตู้ของฉัน ---------------- */
+.page-tabs { margin-bottom: 24px; }
+.tab-count {
+  display: inline-block; margin-left: 6px; min-width: 18px; padding: 1px 6px; border-radius: 999px;
+  background: var(--gold-soft); color: var(--gold); font-size: 11px; text-align: center;
+}
+.bottom-nav button:disabled { opacity: .4; cursor: not-allowed; }
+@media (max-width: 640px) { .page-tabs { display: none; } }
+
+/* ---------------- หน้า "ตู้ของฉัน": ตัวกรอง ---------------- */
+.mine-stats { grid-template-columns: repeat(2, 1fr); margin-bottom: 18px; }
+.chip-filter { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+.chip-filter .chip {
+  font-family: 'Inter', sans-serif; font-size: 12.5px; font-weight: 600; padding: 8px 14px;
+  border: 1px solid var(--line); border-radius: 999px; background: var(--panel); color: var(--muted); cursor: pointer;
+}
+.chip-filter .chip.active { background: var(--ink); border-color: var(--ink); color: #fff; }
+.booking .pin-tag.state { font-family: 'Inter', sans-serif; font-weight: 600; }
+.booking .pin-tag.state.using { background: var(--danger-soft); color: var(--danger); }
+.booking .pin-tag.state.booked { background: var(--warn-soft); color: var(--warn); }
+.wait-note { font-size: 12px; color: var(--muted); }
+
+/* ---------------- หน้าต่างแจ้งย้ายตู้ ---------------- */
+.relocation-modal { max-width: 420px; }
+.reloc-icon {
+  width: 36px; height: 36px; border-radius: 50%; background: var(--warn-soft); color: var(--warn);
+  display: flex; align-items: center; justify-content: center; font-weight: 700; margin-bottom: 10px;
+}
+.reloc-options { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; max-height: 260px; overflow-y: auto; }
+.reloc-option {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; cursor: pointer;
+  padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--paper); color: var(--ink);
+  font-family: 'Inter', sans-serif;
+}
+.reloc-option b { font-family: 'Fraunces', serif; font-size: 18px; }
+.reloc-option span { font-size: 11.5px; color: var(--gold); font-weight: 600; }
+.reloc-option small { font-size: 11px; color: var(--muted); }
+.reloc-option.selected { border-color: var(--ink); box-shadow: 0 0 0 2px var(--ink) inset; background: #fff; }
+.reloc-footer { display: flex; justify-content: space-between; margin-top: 12px; }
