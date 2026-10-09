@@ -1,8 +1,9 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { getJSON, putJSON } from '../api';
-import { formatDateTime } from '../utils/format';
+import { formatDateTime, formatFullDateTime, formatClock } from '../utils/format';
+import RevenuePanel from '../components/RevenuePanel';
 
-const ACTION_LABEL = { book: 'จองตู้', open: 'ปลดล็อกตู้', close: 'คืนตู้', wrong_pin: 'กรอก PIN ผิด', admin_release: 'Admin ปล่อยตู้' };
+const ACTION_LABEL = { book: 'จองตู้', open: 'ปลดล็อกตู้', close: 'คืนตู้', wrong_pin: 'กรอก PIN ผิด', admin_release: 'Admin ปล่อยตู้', relocate: 'ย้ายตู้', decline_relocate: 'ปฏิเสธย้ายตู้ (ยกเลิกจอง)' };
 // สถานะที่คำนวณสดจากตารางการจอง (แสดงในคอลัมน์ "สถานะ")
 const DISPLAY_STATUS_LABEL = {
   available: 'ว่าง',
@@ -38,6 +39,7 @@ const TABS = [
   { key: 'allbookings', label: 'การจองทั้งหมด' },
   { key: 'users', label: 'จัดการผู้ใช้งาน' },
   { key: 'lockers', label: 'จัดการตู้ล็อกเกอร์' },
+  { key: 'revenue', label: 'ประวัติรายได้' },
   { key: 'reports', label: 'รายงานสรุป' },
 ];
 
@@ -72,6 +74,13 @@ function IconRefresh(props) {
 export default function AdminPage() {
   const currentUser = useMemo(loadStoredUser, []);
   const isAdmin = currentUser && currentUser.role === 'admin';
+
+  // ออกจากระบบ: ล้างข้อมูลผู้ใช้ที่เก็บไว้ แล้วกลับหน้าแรก (reload เต็มหน้าเพื่อเคลียร์ state ทั้งหมด)
+  // จำเป็นเพราะ admin ถูก redirect ออกจากหน้า user ตลอด จึงไม่มีทางไปกดออกจากระบบที่หน้านั้นได้
+  function handleLogout() {
+    localStorage.removeItem('locker_user');
+    window.location.replace('/');
+  }
 
   const [activeTab, setActiveTab] = useState('logs');
 
@@ -133,7 +142,7 @@ export default function AdminPage() {
 
   const loadLockers = useCallback(async () => {
     try {
-      const json = await getJSON('/lockers');
+      const json = await getJSON('/admin/lockers');
       setLockers(json.data || []);
       setLockersError(false);
     } catch {
@@ -158,7 +167,7 @@ export default function AdminPage() {
     loadUsers();
     loadLockers();
     loadReports(reportPeriod);
-    setUpdatedAt('อัปเดตล่าสุด ' + new Date().toLocaleTimeString('th-TH'));
+    setUpdatedAt('อัปเดตล่าสุด ' + formatClock(new Date()));
   }, [loadDashboard, loadLogs, loadAllBookings, loadUsers, loadLockers, loadReports, reportPeriod]);
 
   useEffect(() => {
@@ -233,9 +242,12 @@ export default function AdminPage() {
         <div>
           <p className="eyebrow">Prince of Songkla University · Faculty of Liberal Arts</p>
           <h1>แผงควบคุมผู้ดูแลระบบ</h1>
-          <p className="subtitle">จัดการผู้ใช้งาน / ตู้ล็อกเกอร์ / ประวัติ / รายงาน — รองรับจองล่วงหน้าได้ไม่เกิน 7 วัน ไม่มีค่าปรับอัตโนมัติ</p>
+          <p className="subtitle">จัดการผู้ใช้งาน / ตู้ล็อกเกอร์ / ประวัติ / รายงาน</p>
         </div>
-        <div className="top-links"><a href="/">← กลับหน้าหลัก</a></div>
+        <div className="top-links">
+          <span className="admin-who">{currentUser.firstname} {currentUser.lastname} · Admin</span>
+          <button className="btn ghost small" onClick={handleLogout}>ออกจากระบบ</button>
+        </div>
       </header>
 
       <div className="stats admin">
@@ -267,6 +279,8 @@ export default function AdminPage() {
             <option value="close">คืนตู้</option>
             <option value="wrong_pin">กรอก PIN ผิด</option>
             <option value="admin_release">Admin ปล่อยตู้</option>
+            <option value="relocate">ย้ายตู้</option>
+            <option value="decline_relocate">ปฏิเสธย้ายตู้</option>
           </select>
           <input
             type="text"
@@ -286,7 +300,7 @@ export default function AdminPage() {
               ) : (
                 filteredLogs.map((r, i) => (
                   <tr key={i}>
-                    <td data-label="เวลา">{new Date(r.timestamp).toLocaleString('th-TH')}</td>
+                    <td data-label="เวลา">{formatFullDateTime(r.timestamp)}</td>
                     <td data-label="ตู้">{r.locker_number}</td>
                     <td data-label="ผู้ใช้งาน">{r.firstname} {r.lastname}</td>
                     <td data-label="เหตุการณ์"><span className={`badge ${r.action}`}>{ACTION_LABEL[r.action] || r.action}</span></td>
@@ -411,6 +425,11 @@ export default function AdminPage() {
             </tbody>
           </table>
         </div>
+      </div>
+
+      {/* ===== แท็บ: ประวัติรายได้ ===== */}
+      <div className={`tab-panel ${activeTab === 'revenue' ? 'active' : ''}`}>
+        <RevenuePanel adminId={currentUser.user_id} active={activeTab === 'revenue'} />
       </div>
 
       {/* ===== แท็บ: รายงานสรุป ===== */}
