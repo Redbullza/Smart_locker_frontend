@@ -12,7 +12,10 @@ import {
   clampToNow,
 } from '../utils/time';
 import RelocationModal from '../components/RelocationModal';
+
 import UserHistory from '../components/UserHistory';
+
+
 
 const SIZE_LABEL = { small: 'เล็ก', medium: 'กลาง', large: 'ใหญ่' };
 const STATUS_LABEL = {
@@ -68,6 +71,7 @@ const BOOKING_FILTERS = [
 // กำลังใช้งาน = ถึงเวลาแล้วและใช้ตู้ได้ (รวมเกินเวลา) / ที่เหลือคือจองไว้รอใช้ (รวมกรณีถึงเวลาแต่ตู้ยังไม่ว่าง)
 function phaseGroup(phase) {
   return phase === 'active' || phase === 'overdue' ? 'using' : 'booked';
+
 }
 
 function IconHistory(props) {
@@ -78,6 +82,7 @@ function IconHistory(props) {
       <path d="M12 7v5l3 2" />
     </svg>
   );
+
 }
 
 function bookingPhase(b) {
@@ -697,9 +702,11 @@ export default function HomePage() {
           <button role="tab" aria-selected={page === 'mine'} className={`tab-btn ${page === 'mine' ? 'active' : ''}`} onClick={() => setPage('mine')}>
             ตู้ของฉัน{myBookings.length > 0 && <span className="tab-count">{myBookings.length}</span>}
           </button>
+
           <button role="tab" aria-selected={page === 'history'} className={`tab-btn ${page === 'history' ? 'active' : ''}`} onClick={() => setPage('history')}>
             ประวัติการใช้งาน
           </button>
+
         </div>
       )}
 
@@ -927,9 +934,12 @@ export default function HomePage() {
                           </span>
                         ) : phase === 'waiting' ? (
                           <span style={{ color: 'var(--danger)', fontSize: 12 }}>
+
                             {new Date(b.start_time).getTime() > Date.now()
                               ? 'ผู้ใช้คนก่อนยังไม่นำของออกและเลยเวลาแล้ว · อาจใช้ตู้นี้ไม่ได้ตามเวลาที่จอง'
                               : 'ถึงเวลาของคุณแล้ว แต่ผู้ใช้คนก่อนยังไม่นำของออก · ยังเปิดตู้นี้ไม่ได้'}
+                            ถึงเวลาของคุณแล้ว แต่ผู้ใช้คนก่อนยังไม่นำของออก · ยังเปิดตู้นี้ไม่ได้
+
                           </span>
                         ) : phase === 'overdue' ? (
                           <span style={{ color: 'var(--danger)', fontSize: 12 }}>
@@ -972,7 +982,9 @@ export default function HomePage() {
 
       </>)}
 
+
       {page === 'history' && currentUser && <UserHistory user={currentUser} active={page === 'history'} />}
+
 
       <footer>
         <button className="btn ghost" onClick={() => { loadLockers(); loadMyBookings(); }}>รีเฟรชตอนนี้</button>
@@ -991,6 +1003,7 @@ export default function HomePage() {
         >
           <IconTicket /> ตู้ของฉัน
         </button>
+
         <button
           className={page === 'history' ? 'active' : ''}
           disabled={!currentUser}
@@ -998,6 +1011,7 @@ export default function HomePage() {
         >
           <IconHistory /> ประวัติ
         </button>
+
       </nav>
 
       {/* Modal: สแกน QR เพื่อชำระเงิน (จำลอง) */}
