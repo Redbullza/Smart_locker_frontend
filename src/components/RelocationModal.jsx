@@ -1,8 +1,5 @@
 
-import { formatClock, formatDateTime } from '../utils/format';
-
-import { formatClock } from '../utils/format';
-
+import {formatClock, formatDateTime } from '../utils/format';
 
 const SIZE_LABEL = { small: 'เล็ก', medium: 'กลาง', large: 'ใหญ่' };
 
